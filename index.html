@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Cosmic Flow</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; width: 100vw; height: 100vh; touch-action: none; }
+    canvas { display: block; }
+
+    #overlay {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      background: radial-gradient(ellipse at center, #0a0015 0%, #000 100%);
+      color: #fff;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      text-align: center;
+      cursor: pointer;
+      z-index: 10;
+      transition: opacity 0.8s ease;
+    }
+    #overlay h1 {
+      font-size: clamp(28px, 8vw, 52px);
+      font-weight: 100;
+      letter-spacing: 0.25em;
+      color: #c8a0ff;
+      text-shadow: 0 0 40px #9040ff88;
+      margin-bottom: 16px;
+    }
+    #overlay p {
+      font-size: clamp(12px, 3.5vw, 16px);
+      color: rgba(200,160,255,0.5);
+      letter-spacing: 0.15em;
+      line-height: 2em;
+    }
+    #overlay .tap-hint {
+      margin-top: 40px;
+      font-size: clamp(11px, 3vw, 14px);
+      color: rgba(255,255,255,0.25);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 0.25; } 50% { opacity: 0.7; }
+    }
+
+    #hint {
+      position: fixed; bottom: 24px; left: 50%;
+      transform: translateX(-50%);
+      color: rgba(255,255,255,0.2);
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 11px; letter-spacing: 0.1em;
+      text-align: center; pointer-events: none;
+      transition: opacity 3s ease;
+    }
+  </style>
+</head>
+<body>
+
+  <div id="overlay">
+    <h1>COSMIC FLOW</h1>
+    <p>
+      Touch &nbsp;·&nbsp; Tilt &nbsp;·&nbsp; Explore
+    </p>
+    <div class="tap-hint">tap anywhere to begin</div>
+  </div>
+
+  <div id="hint">touch to burst &nbsp;·&nbsp; tilt to shift gravity</div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+  <script>
+  // ─── Global state ────────────────────────────────────────────────
+  let particles = [];
+  let burstPoints = [];
+  let gravX = 0, gravY = 0.04;
+  let flowField = [];
+  let cols, rows;
+  const SCALE = 22;
+  let zoff = 0;
+  let hueShift = 240;   // starts in purple/blue
+  const N_BASE = 500;
+  let started = false;
+
+  // ─── p5 lifecycle ────────────────────────────────────────────────
+  function setup() {
+    let cnv = createCanvas(windowWidth, windowHeight);
+    cnv.elt.style.display = 'block';
+    colorMode(HSB, 360, 100, 100, 100);
+    pixelDensity(Math.min(window.devicePixelRatio, 2));
+
+    cols = floor(width / SCALE) + 1;
+    rows = floor(height / SCALE) + 1;
+    flowField = new Array(cols * rows);
+
+    for (let i = 0; i < N_BASE; i++) {
+      particles.push(new Particle());
+    }
+  }
+
+  function draw() {
+    if (!started) return;
+
+    // ── Fade trails ──
+    blendMode(BLEND);
+    colorMode(HSB, 360, 100, 100, 100);
+    noStroke();
+    fill(240, 20, 4, 11);
+    rect(0, 0, width, height);
+
+    // ── Evolve flow field ──
+    let yoff = 0;
+    for (let y = 0; y < rows; y++) {
+      let xoff = 0;
+      for (let x = 0; x < cols; x++) {
+        let angle = noise(xoff, yoff, zoff) * TWO_PI * 2.4;
+        flowField[x + y * cols] = p5.Vector.fromAngle(angle);
+        xoff += 0.12;
+      }
+      yoff += 0.12;
+    }
+    zoff  += 0.004;
+    hueShift += 0.12;
+
+    // ── Burst ripples (BLEND, so they composite normally) ──
+    noFill();
+    for (let i = burstPoints.length - 1; i >= 0; i--) {
+      let b = burstPoints[i];
+      b.life--;
+      b.r  += 5;
+      if (b.life <= 0) { burstPoints.splice(i, 1); continue; }
+
+      let a  = map(b.life, 0, b.maxLife, 0, 55);
+      let a2 = map(b.life, 0, b.maxLife, 0, 30);
+      let h  = (b.hue + hueShift) % 360;
+
+      stroke(h, 70, 100, a);
+      strokeWeight(1.5);
+      circle(b.x, b.y, b.r * 2);
+
+      stroke((h + 25) % 360, 50, 100, a2);
+      strokeWeight(1);
+      circle(b.x, b.y, b.r * 0.65);
+    }
+
+    // ── Particles with ADD glow ──
+    blendMode(ADD);
+    for (let i = particles.length - 1; i >= 0; i--) {
+      let p = particles[i];
+      p.follow(flowField);
+      p.applyGravity(gravX, gravY);
+      p.applyBursts(burstPoints);
+      p.update();
+      p.checkEdges();
+      p.draw();
+    }
+    blendMode(BLEND);
+  }
+
+  function windowResized() {
+    resizeCanvas(windowWidth, windowHeight);
+    cols = floor(width / SCALE) + 1;
+    rows = floor(height / SCALE) + 1;
+    flowField = new Array(cols * rows);
+  }
+
+  // ─── Input ───────────────────────────────────────────────────────
+  function touchStarted() {
+    handleStart();
+    for (let t of touches) spawnBurst(t.x, t.y);
+    return false;
+  }
+  function mousePressed() {
+    handleStart();
+    if (!touches.length) spawnBurst(mouseX, mouseY);
+  }
+  function touchMoved()  { return false; }
+  function touchEnded()  { return false; }
+
+  function handleStart() {
+    if (started) return;
+    started = true;
+
+    // Dismiss overlay
+    let ov = document.getElementById('overlay');
+    ov.style.opacity = '0';
+    setTimeout(() => ov.remove(), 900);
+
+    // Fade out hint
+    setTimeout(() => {
+      let h = document.getElementById('hint');
+      if (h) h.style.opacity = '0';
+    }, 5000);
+
+    // iOS 13+ orientation permission
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission()
+        .then(s => { if (s === 'granted') window.addEventListener('deviceorientation', onTilt); })
+        .catch(() => {});
+    } else {
+      window.addEventListener('deviceorientation', onTilt);
+    }
+  }
+
+  function onTilt(e) {
+    if (e.gamma == null || e.beta == null) return;
+    // gamma: left/right (-90 → 90), beta: front/back (-180 → 180)
+    gravX = constrain((e.gamma / 45) * 0.28, -0.35, 0.35);
+    gravY = constrain(((e.beta - 30) / 90) * 0.28, -0.35, 0.35);
+  }
+
+  function spawnBurst(x, y) {
+    let h = random(360);
+    burstPoints.push({ x, y, hue: h, life: 55, maxLife: 55, r: 8 });
+
+    // Eject fast particles outward
+    for (let i = 0; i < 45; i++) {
+      let p = new Particle(x, y, h);
+      let speed = random(4, 12);
+      p.vel      = p5.Vector.random2D().mult(speed);
+      p.maxSpeed = speed * 1.1;
+      p.size     = random(1, 3);
+      p.life     = random(60, 160);
+      p.maxLife  = p.life;
+      particles.push(p);
+    }
+
+    // Keep particle count reasonable
+    while (particles.length > N_BASE + 180) particles.shift();
+  }
+
+  // ─── Particle class ──────────────────────────────────────────────
+  class Particle {
+    constructor(x, y, hue) {
+      this.pos     = createVector(x ?? random(width), y ?? random(height));
+      this.prevPos = this.pos.copy();
+      this.vel     = p5.Vector.random2D().mult(random(0.5, 2.2));
+      this.acc     = createVector(0, 0);
+      this.maxSpeed = random(2.5, 5.5);
+      this.hue     = hue ?? ((hueShift + random(-70, 70)) % 360);
+      this.size    = random(0.7, 2.2);
+      this.life    = random(200, 550);
+      this.maxLife = this.life;
+    }
+
+    follow(field) {
+      let fx = constrain(floor(this.pos.x / SCALE), 0, cols - 1);
+      let fy = constrain(floor(this.pos.y / SCALE), 0, rows - 1);
+      let f  = field[fx + fy * cols];
+      if (f) this.acc.add(f.copy().mult(0.45));
+    }
+
+    applyGravity(gx, gy) {
+      this.acc.add(createVector(gx, gy));
+    }
+
+    applyBursts(bursts) {
+      for (let b of bursts) {
+        let d = dist(this.pos.x, this.pos.y, b.x, b.y);
+        if (d < 220 && d > 1) {
+          let f = p5.Vector.sub(this.pos, createVector(b.x, b.y));
+          f.normalize();
+          f.mult(map(d, 0, 220, 0.9, 0) * (b.life / b.maxLife));
+          this.acc.add(f);
+          // Tint toward burst hue
+          this.hue = lerp(this.hue, (b.hue + hueShift) % 360, 0.06);
+        }
+      }
+    }
+
+    update() {
+      this.prevPos.set(this.pos);
+      this.vel.add(this.acc);
+      this.vel.limit(this.maxSpeed);
+      this.pos.add(this.vel);
+      this.acc.mult(0);
+      this.life--;
+    }
+
+    checkEdges() {
+      if (this.pos.x < -30 || this.pos.x > width  + 30 ||
+          this.pos.y < -30 || this.pos.y > height + 30 ||
+          this.life <= 0) {
+        this._respawn();
+      }
+    }
+
+    _respawn() {
+      let edge = floor(random(4));
+      if      (edge === 0) this.pos.set(random(width),  -15);
+      else if (edge === 1) this.pos.set(random(width),  height + 15);
+      else if (edge === 2) this.pos.set(-15,             random(height));
+      else                 this.pos.set(width + 15,      random(height));
+
+      this.prevPos.set(this.pos);
+      this.vel      = p5.Vector.random2D().mult(random(0.5, 2));
+      this.acc.mult(0);
+      this.maxSpeed = random(2.5, 5.5);
+      this.hue      = (hueShift + random(-70, 70)) % 360;
+      this.size     = random(0.7, 2.2);
+      this.life     = random(200, 550);
+      this.maxLife  = this.life;
+    }
+
+    draw() {
+      let speed = this.vel.mag();
+      let lifeRatio = this.life / this.maxLife;
+
+      // Fade in young/old particles, bright in middle life
+      let alphaLife = lifeRatio < 0.15
+        ? map(lifeRatio, 0, 0.15, 0, 1)
+        : lifeRatio > 0.85
+          ? map(lifeRatio, 0.85, 1, 1, 0)
+          : 1;
+
+      let alpha = alphaLife * map(speed, 0, this.maxSpeed, 18, 68);
+      alpha = constrain(alpha, 0, 68);
+
+      let sat = map(speed, 0, this.maxSpeed, 55, 100);
+      let bri = map(speed, 0, this.maxSpeed, 65, 100);
+      let hue = ((this.hue + hueShift) % 360 + 360) % 360;
+
+      colorMode(HSB, 360, 100, 100, 100);
+      stroke(hue, sat, bri, alpha);
+      strokeWeight(this.size);
+      noFill();
+      line(this.prevPos.x, this.prevPos.y, this.pos.x, this.pos.y);
+    }
+  }
+  </script>
+</body>
+</html>
