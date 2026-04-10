@@ -11,34 +11,6 @@
     #p5-canvas  { position: fixed; inset: 0; z-index: 0; }
     #three-canvas { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
 
-    #overlay {
-      position: fixed; inset: 0; z-index: 20;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      background: radial-gradient(ellipse at center, #03060f 0%, #000 100%);
-      color: #fff;
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      text-align: center; cursor: pointer;
-      transition: opacity 0.8s ease;
-    }
-    #overlay h1 {
-      font-size: clamp(28px, 8vw, 52px);
-      font-weight: 100; letter-spacing: 0.3em;
-      color: #7df4ff;
-      text-shadow: 0 0 60px #00d4ff66;
-      margin-bottom: 16px;
-    }
-    #overlay p {
-      font-size: clamp(11px, 3vw, 14px);
-      color: rgba(125,244,255,0.35);
-      letter-spacing: 0.2em; line-height: 2.2em;
-    }
-    #overlay .tap-hint {
-      margin-top: 44px; font-size: clamp(10px, 2.5vw, 13px);
-      color: rgba(255,255,255,0.2);
-      animation: pulse 2.2s infinite;
-    }
-    @keyframes pulse { 0%,100%{opacity:.2} 50%{opacity:.6} }
 
     #hint {
       position: fixed; bottom: 24px; left: 50%;
@@ -64,13 +36,7 @@
   </style>
 </head>
 <body>
-
-  <div id="overlay">
-    <h1>COSMIC FLOW</h1>
-    <p>Drag the planet &nbsp;·&nbsp; Tilt for gravity</p>
-    <div class="tap-hint">tap to begin</div>
-  </div>
-
+<!-- v2 -->
   <div id="hint">drag planet to bend space &nbsp;·&nbsp; pinch to zoom &nbsp;·&nbsp; tilt for gravity</div>
 
   <div id="loader">
@@ -96,7 +62,7 @@
 
     // ── Shared state ──────────────────────────────────────────────
     const state = {
-      started: false,
+      started: true,
       gravX: 0, gravY: 0.015,
       // Sphere rotation (what particles react to)
       rotX: 0.15, rotY: 0,
@@ -272,9 +238,11 @@
       state.gravY = Math.max(-0.3, Math.min(0.3, ((ev.beta - 30) / 90) * 0.25));
     }
 
-    window._cosmicStart = () => {
-      if (state.started) return;
-      state.started = true;
+    // Request tilt permission on first touch (required by iOS 13+)
+    let tiltReady = false;
+    function initTilt() {
+      if (tiltReady) return;
+      tiltReady = true;
       if (typeof DeviceOrientationEvent !== 'undefined' &&
           typeof DeviceOrientationEvent.requestPermission === 'function') {
         DeviceOrientationEvent.requestPermission()
@@ -283,7 +251,9 @@
       } else {
         window.addEventListener('deviceorientation', onTilt);
       }
-    };
+    }
+    document.addEventListener('touchstart', initTilt, { once: true });
+    document.addEventListener('mousedown',  initTilt, { once: true });
   </script>
 
   <!-- p5.js — stars + particle field -->
@@ -394,26 +364,14 @@
     }
   }
 
-  // ── Start on first tap ───────────────────────────────────
-  function touchStarted() {
-    _tryStart();
-    return false;
-  }
-  function mousePressed() { _tryStart(); }
-  function touchMoved()   { return false; }
-  function touchEnded()   { return false; }
+  function touchMoved() { return false; }
+  function touchEnded() { return false; }
 
-  function _tryStart() {
-    const s = window._cosmicState;
-    if (!s || s.started) return;
-    window._cosmicStart && window._cosmicStart();
-    let ov = document.getElementById('overlay');
-    if (ov) { ov.style.opacity = '0'; setTimeout(() => ov.remove(), 900); }
-    setTimeout(() => {
-      let h = document.getElementById('hint');
-      if (h) h.style.opacity = '0';
-    }, 5500);
-  }
+  // Fade out hint after a few seconds
+  setTimeout(() => {
+    let h = document.getElementById('hint');
+    if (h) h.style.opacity = '0';
+  }, 5000);
 
   // ── Particle class ───────────────────────────────────────
   class Particle {
