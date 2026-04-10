@@ -7,10 +7,18 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; width: 100vw; height: 100vh; touch-action: none; }
-    canvas { display: block; }
+
+    /* p5 canvas sits at base layer */
+    #p5-canvas { position: fixed; inset: 0; z-index: 0; }
+
+    /* Three.js canvas floats above, transparent bg, no pointer capture */
+    #three-canvas {
+      position: fixed; inset: 0; z-index: 1;
+      pointer-events: none;
+    }
 
     #overlay {
-      position: fixed; inset: 0;
+      position: fixed; inset: 0; z-index: 20;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
       background: radial-gradient(ellipse at center, #0a0015 0%, #000 100%);
@@ -18,7 +26,6 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
       text-align: center;
       cursor: pointer;
-      z-index: 10;
       transition: opacity 0.8s ease;
     }
     #overlay h1 {
@@ -41,9 +48,7 @@
       color: rgba(255,255,255,0.25);
       animation: pulse 2s infinite;
     }
-    @keyframes pulse {
-      0%, 100% { opacity: 0.25; } 50% { opacity: 0.7; }
-    }
+    @keyframes pulse { 0%,100%{opacity:.25} 50%{opacity:.7} }
 
     #hint {
       position: fixed; bottom: 24px; left: 50%;
@@ -51,64 +56,297 @@
       color: rgba(255,255,255,0.2);
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       font-size: 11px; letter-spacing: 0.1em;
-      text-align: center; pointer-events: none;
+      text-align: center; pointer-events: none; z-index: 5;
       transition: opacity 3s ease;
     }
+
+    #loader {
+      position: fixed; bottom: 50px; left: 50%;
+      transform: translateX(-50%);
+      z-index: 6; pointer-events: none;
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+    }
+    #loader-label {
+      font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 11px; color: rgba(200,160,255,0.5); letter-spacing: 0.1em;
+    }
+    #bar-wrap { width: 120px; height: 2px; background: #333; border-radius: 99px; overflow: hidden; }
+    #bar { height: 100%; width: 0%; background: #c8a0ff; transition: width 0.2s; }
   </style>
 </head>
 <body>
 
   <div id="overlay">
     <h1>COSMIC FLOW</h1>
-    <p>
-      Touch &nbsp;·&nbsp; Tilt &nbsp;·&nbsp; Explore
-    </p>
+    <p>Touch &nbsp;·&nbsp; Tilt &nbsp;·&nbsp; Explore</p>
     <div class="tap-hint">tap anywhere to begin</div>
   </div>
 
-  <div id="hint">touch to burst &nbsp;·&nbsp; tilt to shift gravity</div>
+  <div id="hint">drag sphere to rotate &nbsp;·&nbsp; pinch to zoom &nbsp;·&nbsp; tap to burst &nbsp;·&nbsp; tilt for gravity</div>
 
+  <div id="loader">
+    <div id="loader-label">loading model…</div>
+    <div id="bar-wrap"><div id="bar"></div></div>
+  </div>
+
+  <!-- p5.js for particle field -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
+
+  <!-- Three.js via importmap -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three":         "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { GLTFLoader }  from 'three/addons/loaders/GLTFLoader.js';
+    import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+
+    // ════════════════════════════════════════════════════════
+    //  SHARED STATE  (read by both p5 + Three.js)
+    // ════════════════════════════════════════════════════════
+    const state = {
+      started: false,
+      gravX: 0, gravY: 0.04,
+      // touch routing
+      touchOnSphere: false,
+      // model rotation targets (smooth)
+      rotX: 0.2, rotY: 0,
+      rotXCur: 0.2, rotYCur: 0,
+      // zoom
+      zoomTarget: 2.4, zoomCur: 2.4,
+      // pinch
+      lastPinchDist: null,
+      // drag
+      lastDX: 0, lastDY: 0,
+    };
+    window._cosmicState = state; // expose to p5 global script below
+
+    // ════════════════════════════════════════════════════════
+    //  THREE.JS — 3D object layer
+    // ════════════════════════════════════════════════════════
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.4;
+    renderer.setClearColor(0x000000, 0); // transparent background
+
+    const threeCanvas = renderer.domElement;
+    threeCanvas.id = 'three-canvas';
+    document.body.appendChild(threeCanvas);
+
+    const scene  = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.01, 1000);
+    camera.position.set(0, 0, state.zoomCur);
+
+    // Lighting
+    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
+    const key = new THREE.DirectionalLight(0xffffff, 2.8);
+    key.position.set(4, 6, 5);
+    scene.add(key);
+    const fill = new THREE.DirectionalLight(0xc0b0ff, 1.0);
+    fill.position.set(-4, -2, -4);
+    scene.add(fill);
+    const rim = new THREE.DirectionalLight(0xffa0ff, 0.6);
+    rim.position.set(0, -5, -3);
+    scene.add(rim);
+
+    // Load GLB
+    let modelGroup = null;
+    const bar = document.getElementById('bar');
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/libs/draco/');
+    const gltfLoader = new GLTFLoader();
+    gltfLoader.setDRACOLoader(dracoLoader);
+
+    gltfLoader.load(
+      'Meshy_AI_Meadow_in_the_Sky_0410073905_texture.glb',
+      (gltf) => {
+        modelGroup = gltf.scene;
+        // Centre & normalise
+        const box    = new THREE.Box3().setFromObject(modelGroup);
+        const centre = box.getCenter(new THREE.Vector3());
+        const size   = box.getSize(new THREE.Vector3()).length();
+        modelGroup.position.sub(centre);
+        modelGroup.scale.multiplyScalar(2.2 / size);
+        scene.add(modelGroup);
+
+        document.getElementById('loader').style.display = 'none';
+      },
+      (xhr) => { if (xhr.total) bar.style.width = (xhr.loaded / xhr.total * 100) + '%'; },
+      (err) => { console.error(err); document.getElementById('loader-label').textContent = 'load error'; }
+    );
+
+    // Three.js render loop
+    function threeAnimate() {
+      requestAnimationFrame(threeAnimate);
+      if (!state.started) { renderer.render(scene, camera); return; }
+
+      const ease = 0.09;
+      state.rotXCur  += (state.rotX      - state.rotXCur)  * ease;
+      state.rotYCur  += (state.rotY      - state.rotYCur)  * ease;
+      state.zoomCur  += (state.zoomTarget - state.zoomCur) * ease;
+
+      if (modelGroup) {
+        modelGroup.rotation.x = state.rotXCur;
+        modelGroup.rotation.y = state.rotYCur;
+      }
+      camera.position.z = state.zoomCur;
+      renderer.render(scene, camera);
+    }
+    threeAnimate();
+
+    // Resize
+    window.addEventListener('resize', () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+    });
+
+    // ════════════════════════════════════════════════════════
+    //  TOUCH / MOUSE INPUT  (routed here, shared with p5)
+    // ════════════════════════════════════════════════════════
+    const HIT_RADIUS = () => Math.min(innerWidth, innerHeight) * 0.28;
+
+    function nearCenter(x, y) {
+      const dx = x - innerWidth  / 2;
+      const dy = y - innerHeight / 2;
+      return Math.sqrt(dx * dx + dy * dy) < HIT_RADIUS();
+    }
+
+    function pinchDist(e) {
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      return Math.sqrt(dx * dx + dy * dy);
+    }
+
+    document.addEventListener('touchstart', (e) => {
+      if (!state.started) return;
+      if (e.touches.length === 1) {
+        state.touchOnSphere = nearCenter(e.touches[0].clientX, e.touches[0].clientY);
+        state.lastDX = e.touches[0].clientX;
+        state.lastDY = e.touches[0].clientY;
+      }
+      if (e.touches.length === 2) {
+        state.lastPinchDist = pinchDist(e);
+        state.touchOnSphere = false; // pinch overrides
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+      if (!state.started) return;
+      if (e.touches.length === 1 && state.touchOnSphere) {
+        const dx = e.touches[0].clientX - state.lastDX;
+        const dy = e.touches[0].clientY - state.lastDY;
+        state.rotY += dx * 0.009;
+        state.rotX += dy * 0.009;
+        state.rotX  = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.rotX));
+        state.lastDX = e.touches[0].clientX;
+        state.lastDY = e.touches[0].clientY;
+      }
+      if (e.touches.length === 2 && state.lastPinchDist !== null) {
+        const d = pinchDist(e);
+        state.zoomTarget = Math.max(0.8, Math.min(7, state.zoomTarget + (state.lastPinchDist - d) * 0.014));
+        state.lastPinchDist = d;
+      }
+    }, { passive: true });
+
+    document.addEventListener('touchend', (e) => {
+      if (e.touches.length < 2) state.lastPinchDist = null;
+      if (e.touches.length === 0) state.touchOnSphere = false;
+    }, { passive: true });
+
+    // Mouse (desktop)
+    let mouseDragging = false, mouseOnSphere = false;
+    document.addEventListener('mousedown', (e) => {
+      if (!state.started) return;
+      mouseDragging = true;
+      mouseOnSphere = nearCenter(e.clientX, e.clientY);
+      state.lastDX = e.clientX; state.lastDY = e.clientY;
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!mouseDragging || !mouseOnSphere) return;
+      const dx = e.clientX - state.lastDX;
+      const dy = e.clientY - state.lastDY;
+      state.rotY += dx * 0.009;
+      state.rotX += dy * 0.009;
+      state.rotX  = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.rotX));
+      state.lastDX = e.clientX; state.lastDY = e.clientY;
+    });
+    document.addEventListener('mouseup', () => { mouseDragging = false; mouseOnSphere = false; });
+    document.addEventListener('wheel', (e) => {
+      state.zoomTarget = Math.max(0.8, Math.min(7, state.zoomTarget + e.deltaY * 0.006));
+    }, { passive: true });
+
+    // Tilt
+    function onTilt(ev) {
+      if (ev.gamma == null) return;
+      state.gravX = Math.max(-0.35, Math.min(0.35, (ev.gamma / 45) * 0.28));
+      state.gravY = Math.max(-0.35, Math.min(0.35, ((ev.beta - 30) / 90) * 0.28));
+    }
+
+    // Start handler (called from p5 overlay tap)
+    window._cosmicStart = () => {
+      if (state.started) return;
+      state.started = true;
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(s => { if (s === 'granted') window.addEventListener('deviceorientation', onTilt); })
+          .catch(() => {});
+      } else {
+        window.addEventListener('deviceorientation', onTilt);
+      }
+    };
+
+  </script>
+
+  <!-- p5.js particle field -->
   <script>
-  // ─── Global state ────────────────────────────────────────────────
+  // ════════════════════════════════════════════════════════
+  //  P5.JS — particle flow field
+  // ════════════════════════════════════════════════════════
   let particles = [];
   let burstPoints = [];
-  let gravX = 0, gravY = 0.04;
   let flowField = [];
   let cols, rows;
   const SCALE = 22;
   let zoff = 0;
-  let hueShift = 240;   // starts in purple/blue
+  let hueShift = 240;
   const N_BASE = 500;
-  let started = false;
 
-  // ─── p5 lifecycle ────────────────────────────────────────────────
   function setup() {
     let cnv = createCanvas(windowWidth, windowHeight);
-    cnv.elt.style.display = 'block';
+    cnv.elt.id = 'p5-canvas';
+    cnv.elt.style.position = 'fixed';
+    cnv.elt.style.inset = '0';
+    cnv.elt.style.zIndex = '0';
     colorMode(HSB, 360, 100, 100, 100);
     pixelDensity(Math.min(window.devicePixelRatio, 2));
-
     cols = floor(width / SCALE) + 1;
     rows = floor(height / SCALE) + 1;
     flowField = new Array(cols * rows);
-
-    for (let i = 0; i < N_BASE; i++) {
-      particles.push(new Particle());
-    }
+    for (let i = 0; i < N_BASE; i++) particles.push(new Particle());
   }
 
   function draw() {
-    if (!started) return;
+    const state = window._cosmicState;
+    if (!state || !state.started) return;
 
-    // ── Fade trails ──
     blendMode(BLEND);
     colorMode(HSB, 360, 100, 100, 100);
     noStroke();
     fill(240, 20, 4, 11);
     rect(0, 0, width, height);
 
-    // ── Evolve flow field ──
+    // Flow field
     let yoff = 0;
     for (let y = 0; y < rows; y++) {
       let xoff = 0;
@@ -119,36 +357,28 @@
       }
       yoff += 0.12;
     }
-    zoff  += 0.004;
+    zoff += 0.004;
     hueShift += 0.12;
 
-    // ── Burst ripples (BLEND, so they composite normally) ──
+    // Burst ripples
     noFill();
     for (let i = burstPoints.length - 1; i >= 0; i--) {
       let b = burstPoints[i];
-      b.life--;
-      b.r  += 5;
+      b.life--; b.r += 5;
       if (b.life <= 0) { burstPoints.splice(i, 1); continue; }
-
       let a  = map(b.life, 0, b.maxLife, 0, 55);
       let a2 = map(b.life, 0, b.maxLife, 0, 30);
       let h  = (b.hue + hueShift) % 360;
-
-      stroke(h, 70, 100, a);
-      strokeWeight(1.5);
-      circle(b.x, b.y, b.r * 2);
-
-      stroke((h + 25) % 360, 50, 100, a2);
-      strokeWeight(1);
-      circle(b.x, b.y, b.r * 0.65);
+      stroke(h, 70, 100, a);   strokeWeight(1.5); circle(b.x, b.y, b.r * 2);
+      stroke((h+25)%360, 50, 100, a2); strokeWeight(1); circle(b.x, b.y, b.r * 0.65);
     }
 
-    // ── Particles with ADD glow ──
+    // Particles
     blendMode(ADD);
     for (let i = particles.length - 1; i >= 0; i--) {
       let p = particles[i];
       p.follow(flowField);
-      p.applyGravity(gravX, gravY);
+      p.applyGravity(state.gravX, state.gravY);
       p.applyBursts(burstPoints);
       p.update();
       p.checkEdges();
@@ -164,84 +394,78 @@
     flowField = new Array(cols * rows);
   }
 
-  // ─── Input ───────────────────────────────────────────────────────
+  // ── Input ────────────────────────────────────────────────
   function touchStarted() {
-    handleStart();
-    for (let t of touches) spawnBurst(t.x, t.y);
+    const state = window._cosmicState;
+    if (!state) return false;
+
+    if (!state.started) {
+      window._cosmicStart && window._cosmicStart();
+      let ov = document.getElementById('overlay');
+      if (ov) { ov.style.opacity = '0'; setTimeout(() => ov.remove(), 900); }
+      setTimeout(() => {
+        let h = document.getElementById('hint');
+        if (h) h.style.opacity = '0';
+      }, 5500);
+    }
+
+    if (state.started && !state.touchOnSphere && touches.length === 1) {
+      spawnBurst(touches[0].x, touches[0].y);
+    }
     return false;
   }
+
   function mousePressed() {
-    handleStart();
-    if (!touches.length) spawnBurst(mouseX, mouseY);
-  }
-  function touchMoved()  { return false; }
-  function touchEnded()  { return false; }
-
-  function handleStart() {
-    if (started) return;
-    started = true;
-
-    // Dismiss overlay
-    let ov = document.getElementById('overlay');
-    ov.style.opacity = '0';
-    setTimeout(() => ov.remove(), 900);
-
-    // Fade out hint
-    setTimeout(() => {
-      let h = document.getElementById('hint');
-      if (h) h.style.opacity = '0';
-    }, 5000);
-
-    // iOS 13+ orientation permission
-    if (typeof DeviceOrientationEvent !== 'undefined' &&
-        typeof DeviceOrientationEvent.requestPermission === 'function') {
-      DeviceOrientationEvent.requestPermission()
-        .then(s => { if (s === 'granted') window.addEventListener('deviceorientation', onTilt); })
-        .catch(() => {});
-    } else {
-      window.addEventListener('deviceorientation', onTilt);
+    const state = window._cosmicState;
+    if (!state) return;
+    if (!state.started) {
+      window._cosmicStart && window._cosmicStart();
+      let ov = document.getElementById('overlay');
+      if (ov) { ov.style.opacity = '0'; setTimeout(() => ov.remove(), 900); }
+      setTimeout(() => {
+        let h = document.getElementById('hint');
+        if (h) h.style.opacity = '0';
+      }, 5500);
+    }
+    // Burst only if not dragging the sphere (checked via mouseOnSphere in module script)
+    if (state.started && !touches.length) {
+      const dx = mouseX - width / 2, dy = mouseY - height / 2;
+      const onSphere = Math.sqrt(dx*dx + dy*dy) < Math.min(width,height) * 0.28;
+      if (!onSphere) spawnBurst(mouseX, mouseY);
     }
   }
 
-  function onTilt(e) {
-    if (e.gamma == null || e.beta == null) return;
-    // gamma: left/right (-90 → 90), beta: front/back (-180 → 180)
-    gravX = constrain((e.gamma / 45) * 0.28, -0.35, 0.35);
-    gravY = constrain(((e.beta - 30) / 90) * 0.28, -0.35, 0.35);
-  }
+  function touchMoved()  { return false; }
+  function touchEnded()  { return false; }
 
   function spawnBurst(x, y) {
     let h = random(360);
     burstPoints.push({ x, y, hue: h, life: 55, maxLife: 55, r: 8 });
-
-    // Eject fast particles outward
     for (let i = 0; i < 45; i++) {
       let p = new Particle(x, y, h);
       let speed = random(4, 12);
-      p.vel      = p5.Vector.random2D().mult(speed);
+      p.vel = p5.Vector.random2D().mult(speed);
       p.maxSpeed = speed * 1.1;
-      p.size     = random(1, 3);
-      p.life     = random(60, 160);
-      p.maxLife  = p.life;
+      p.size = random(1, 3);
+      p.life = random(60, 160);
+      p.maxLife = p.life;
       particles.push(p);
     }
-
-    // Keep particle count reasonable
     while (particles.length > N_BASE + 180) particles.shift();
   }
 
-  // ─── Particle class ──────────────────────────────────────────────
+  // ── Particle class ───────────────────────────────────────
   class Particle {
     constructor(x, y, hue) {
-      this.pos     = createVector(x ?? random(width), y ?? random(height));
-      this.prevPos = this.pos.copy();
-      this.vel     = p5.Vector.random2D().mult(random(0.5, 2.2));
-      this.acc     = createVector(0, 0);
+      this.pos      = createVector(x ?? random(width), y ?? random(height));
+      this.prevPos  = this.pos.copy();
+      this.vel      = p5.Vector.random2D().mult(random(0.5, 2.2));
+      this.acc      = createVector(0, 0);
       this.maxSpeed = random(2.5, 5.5);
-      this.hue     = hue ?? ((hueShift + random(-70, 70)) % 360);
-      this.size    = random(0.7, 2.2);
-      this.life    = random(200, 550);
-      this.maxLife = this.life;
+      this.hue      = hue ?? ((hueShift + random(-70, 70)) % 360);
+      this.size     = random(0.7, 2.2);
+      this.life     = random(200, 550);
+      this.maxLife  = this.life;
     }
 
     follow(field) {
@@ -251,19 +475,15 @@
       if (f) this.acc.add(f.copy().mult(0.45));
     }
 
-    applyGravity(gx, gy) {
-      this.acc.add(createVector(gx, gy));
-    }
+    applyGravity(gx, gy) { this.acc.add(createVector(gx, gy)); }
 
     applyBursts(bursts) {
       for (let b of bursts) {
         let d = dist(this.pos.x, this.pos.y, b.x, b.y);
         if (d < 220 && d > 1) {
           let f = p5.Vector.sub(this.pos, createVector(b.x, b.y));
-          f.normalize();
-          f.mult(map(d, 0, 220, 0.9, 0) * (b.life / b.maxLife));
+          f.normalize().mult(map(d, 0, 220, 0.9, 0) * (b.life / b.maxLife));
           this.acc.add(f);
-          // Tint toward burst hue
           this.hue = lerp(this.hue, (b.hue + hueShift) % 360, 0.06);
         }
       }
@@ -271,17 +491,15 @@
 
     update() {
       this.prevPos.set(this.pos);
-      this.vel.add(this.acc);
-      this.vel.limit(this.maxSpeed);
+      this.vel.add(this.acc).limit(this.maxSpeed);
       this.pos.add(this.vel);
       this.acc.mult(0);
       this.life--;
     }
 
     checkEdges() {
-      if (this.pos.x < -30 || this.pos.x > width  + 30 ||
-          this.pos.y < -30 || this.pos.y > height + 30 ||
-          this.life <= 0) {
+      if (this.pos.x < -30 || this.pos.x > width + 30 ||
+          this.pos.y < -30 || this.pos.y > height + 30 || this.life <= 0) {
         this._respawn();
       }
     }
@@ -292,7 +510,6 @@
       else if (edge === 1) this.pos.set(random(width),  height + 15);
       else if (edge === 2) this.pos.set(-15,             random(height));
       else                 this.pos.set(width + 15,      random(height));
-
       this.prevPos.set(this.pos);
       this.vel      = p5.Vector.random2D().mult(random(0.5, 2));
       this.acc.mult(0);
@@ -305,22 +522,12 @@
 
     draw() {
       let speed = this.vel.mag();
-      let lifeRatio = this.life / this.maxLife;
-
-      // Fade in young/old particles, bright in middle life
-      let alphaLife = lifeRatio < 0.15
-        ? map(lifeRatio, 0, 0.15, 0, 1)
-        : lifeRatio > 0.85
-          ? map(lifeRatio, 0.85, 1, 1, 0)
-          : 1;
-
-      let alpha = alphaLife * map(speed, 0, this.maxSpeed, 18, 68);
-      alpha = constrain(alpha, 0, 68);
-
+      let lr = this.life / this.maxLife;
+      let alphaLife = lr < 0.15 ? map(lr, 0, 0.15, 0, 1) : lr > 0.85 ? map(lr, 0.85, 1, 1, 0) : 1;
+      let alpha = constrain(alphaLife * map(speed, 0, this.maxSpeed, 18, 68), 0, 68);
       let sat = map(speed, 0, this.maxSpeed, 55, 100);
       let bri = map(speed, 0, this.maxSpeed, 65, 100);
       let hue = ((this.hue + hueShift) % 360 + 360) % 360;
-
       colorMode(HSB, 360, 100, 100, 100);
       stroke(hue, sat, bri, alpha);
       strokeWeight(this.size);
