@@ -8,58 +8,47 @@
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { background: #000; overflow: hidden; width: 100vw; height: 100vh; touch-action: none; }
 
-    /* p5 canvas sits at base layer */
-    #p5-canvas { position: fixed; inset: 0; z-index: 0; }
-
-    /* Three.js canvas floats above, transparent bg, no pointer capture */
-    #three-canvas {
-      position: fixed; inset: 0; z-index: 1;
-      pointer-events: none;
-    }
+    #p5-canvas  { position: fixed; inset: 0; z-index: 0; }
+    #three-canvas { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
 
     #overlay {
       position: fixed; inset: 0; z-index: 20;
       display: flex; flex-direction: column;
       align-items: center; justify-content: center;
-      background: radial-gradient(ellipse at center, #0a0015 0%, #000 100%);
+      background: radial-gradient(ellipse at center, #03060f 0%, #000 100%);
       color: #fff;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      text-align: center;
-      cursor: pointer;
+      text-align: center; cursor: pointer;
       transition: opacity 0.8s ease;
     }
     #overlay h1 {
       font-size: clamp(28px, 8vw, 52px);
-      font-weight: 100;
-      letter-spacing: 0.25em;
-      color: #c8a0ff;
-      text-shadow: 0 0 40px #9040ff88;
+      font-weight: 100; letter-spacing: 0.3em;
+      color: #7df4ff;
+      text-shadow: 0 0 60px #00d4ff66;
       margin-bottom: 16px;
     }
     #overlay p {
-      font-size: clamp(12px, 3.5vw, 16px);
-      color: rgba(200,160,255,0.5);
-      letter-spacing: 0.15em;
-      line-height: 2em;
+      font-size: clamp(11px, 3vw, 14px);
+      color: rgba(125,244,255,0.35);
+      letter-spacing: 0.2em; line-height: 2.2em;
     }
     #overlay .tap-hint {
-      margin-top: 40px;
-      font-size: clamp(11px, 3vw, 14px);
-      color: rgba(255,255,255,0.25);
-      animation: pulse 2s infinite;
+      margin-top: 44px; font-size: clamp(10px, 2.5vw, 13px);
+      color: rgba(255,255,255,0.2);
+      animation: pulse 2.2s infinite;
     }
-    @keyframes pulse { 0%,100%{opacity:.25} 50%{opacity:.7} }
+    @keyframes pulse { 0%,100%{opacity:.2} 50%{opacity:.6} }
 
     #hint {
       position: fixed; bottom: 24px; left: 50%;
       transform: translateX(-50%);
-      color: rgba(255,255,255,0.2);
+      color: rgba(125,244,255,0.18);
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
       font-size: 11px; letter-spacing: 0.1em;
       text-align: center; pointer-events: none; z-index: 5;
       transition: opacity 3s ease;
     }
-
     #loader {
       position: fixed; bottom: 50px; left: 50%;
       transform: translateX(-50%);
@@ -68,31 +57,29 @@
     }
     #loader-label {
       font-family: -apple-system, BlinkMacSystemFont, sans-serif;
-      font-size: 11px; color: rgba(200,160,255,0.5); letter-spacing: 0.1em;
+      font-size: 11px; color: rgba(125,244,255,0.4); letter-spacing: 0.1em;
     }
-    #bar-wrap { width: 120px; height: 2px; background: #333; border-radius: 99px; overflow: hidden; }
-    #bar { height: 100%; width: 0%; background: #c8a0ff; transition: width 0.2s; }
+    #bar-wrap { width: 120px; height: 2px; background: #0a1a1f; border-radius: 99px; overflow: hidden; }
+    #bar { height: 100%; width: 0%; background: #7df4ff; transition: width 0.2s; }
   </style>
 </head>
 <body>
 
   <div id="overlay">
     <h1>COSMIC FLOW</h1>
-    <p>Touch &nbsp;·&nbsp; Tilt &nbsp;·&nbsp; Explore</p>
-    <div class="tap-hint">tap anywhere to begin</div>
+    <p>Drag the planet &nbsp;·&nbsp; Tilt for gravity</p>
+    <div class="tap-hint">tap to begin</div>
   </div>
 
-  <div id="hint">drag sphere to rotate &nbsp;·&nbsp; pinch to zoom &nbsp;·&nbsp; tap to burst &nbsp;·&nbsp; tilt for gravity</div>
+  <div id="hint">drag planet to bend space &nbsp;·&nbsp; pinch to zoom &nbsp;·&nbsp; tilt for gravity</div>
 
   <div id="loader">
-    <div id="loader-label">loading model…</div>
+    <div id="loader-label">loading…</div>
     <div id="bar-wrap"><div id="bar"></div></div>
   </div>
 
-  <!-- p5.js for particle field -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
 
-  <!-- Three.js via importmap -->
   <script type="importmap">
   {
     "imports": {
@@ -107,37 +94,29 @@
     import { GLTFLoader }  from 'three/addons/loaders/GLTFLoader.js';
     import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 
-    // ════════════════════════════════════════════════════════
-    //  SHARED STATE  (read by both p5 + Three.js)
-    // ════════════════════════════════════════════════════════
+    // ── Shared state ──────────────────────────────────────────────
     const state = {
       started: false,
-      gravX: 0, gravY: 0.04,
-      // touch routing
-      touchOnSphere: false,
-      // model rotation targets (smooth)
-      rotX: 0.2, rotY: 0,
-      rotXCur: 0.2, rotYCur: 0,
-      // zoom
+      gravX: 0, gravY: 0.015,
+      // Sphere rotation (what particles react to)
+      rotX: 0.15, rotY: 0,
+      rotXCur: 0.15, rotYCur: 0,
+      rotXVel: 0, rotYVel: 0,   // inertia
       zoomTarget: 2.4, zoomCur: 2.4,
-      // pinch
       lastPinchDist: null,
-      // drag
       lastDX: 0, lastDY: 0,
+      touchOnSphere: false,
     };
-    window._cosmicState = state; // expose to p5 global script below
+    window._cosmicState = state;
 
-    // ════════════════════════════════════════════════════════
-    //  THREE.JS — 3D object layer
-    // ════════════════════════════════════════════════════════
+    // ── Renderer ──────────────────────────────────────────────────
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(innerWidth, innerHeight);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.4;
-    renderer.setClearColor(0x000000, 0); // transparent background
-
+    renderer.setClearColor(0x000000, 0);
     const threeCanvas = renderer.domElement;
     threeCanvas.id = 'three-canvas';
     document.body.appendChild(threeCanvas);
@@ -146,17 +125,13 @@
     const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.01, 1000);
     camera.position.set(0, 0, state.zoomCur);
 
-    // Lighting
-    scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-    const key = new THREE.DirectionalLight(0xffffff, 2.8);
-    key.position.set(4, 6, 5);
-    scene.add(key);
-    const fill = new THREE.DirectionalLight(0xc0b0ff, 1.0);
-    fill.position.set(-4, -2, -4);
-    scene.add(fill);
-    const rim = new THREE.DirectionalLight(0xffa0ff, 0.6);
-    rim.position.set(0, -5, -3);
-    scene.add(rim);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const key = new THREE.DirectionalLight(0xb0e8ff, 3.0);
+    key.position.set(4, 6, 5); scene.add(key);
+    const fill = new THREE.DirectionalLight(0x004466, 1.2);
+    fill.position.set(-4, -2, -4); scene.add(fill);
+    const rim = new THREE.DirectionalLight(0x00ffcc, 0.5);
+    rim.position.set(0, -5, -3); scene.add(rim);
 
     // Load GLB
     let modelGroup = null;
@@ -170,29 +145,33 @@
       'Meshy_AI_Meadow_in_the_Sky_0410073905_texture.glb',
       (gltf) => {
         modelGroup = gltf.scene;
-        // Centre & normalise
         const box    = new THREE.Box3().setFromObject(modelGroup);
         const centre = box.getCenter(new THREE.Vector3());
         const size   = box.getSize(new THREE.Vector3()).length();
         modelGroup.position.sub(centre);
         modelGroup.scale.multiplyScalar(2.2 / size);
         scene.add(modelGroup);
-
         document.getElementById('loader').style.display = 'none';
       },
       (xhr) => { if (xhr.total) bar.style.width = (xhr.loaded / xhr.total * 100) + '%'; },
       (err) => { console.error(err); document.getElementById('loader-label').textContent = 'load error'; }
     );
 
-    // Three.js render loop
+    // ── Render loop ───────────────────────────────────────────────
     function threeAnimate() {
       requestAnimationFrame(threeAnimate);
-      if (!state.started) { renderer.render(scene, camera); return; }
 
-      const ease = 0.09;
-      state.rotXCur  += (state.rotX      - state.rotXCur)  * ease;
-      state.rotYCur  += (state.rotY      - state.rotYCur)  * ease;
-      state.zoomCur  += (state.zoomTarget - state.zoomCur) * ease;
+      const ease = 0.1;
+      // Apply inertia
+      state.rotXVel *= 0.92;
+      state.rotYVel *= 0.92;
+      state.rotX    += state.rotXVel;
+      state.rotY    += state.rotYVel;
+      state.rotX     = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.rotX));
+
+      state.rotXCur += (state.rotX - state.rotXCur) * ease;
+      state.rotYCur += (state.rotY - state.rotYCur) * ease;
+      state.zoomCur += (state.zoomTarget - state.zoomCur) * ease;
 
       if (modelGroup) {
         modelGroup.rotation.x = state.rotXCur;
@@ -203,21 +182,17 @@
     }
     threeAnimate();
 
-    // Resize
     window.addEventListener('resize', () => {
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(innerWidth, innerHeight);
     });
 
-    // ════════════════════════════════════════════════════════
-    //  TOUCH / MOUSE INPUT  (routed here, shared with p5)
-    // ════════════════════════════════════════════════════════
-    const HIT_RADIUS = () => Math.min(innerWidth, innerHeight) * 0.28;
+    // ── Input ─────────────────────────────────────────────────────
+    const HIT_RADIUS = () => Math.min(innerWidth, innerHeight) * 0.3;
 
     function nearCenter(x, y) {
-      const dx = x - innerWidth  / 2;
-      const dy = y - innerHeight / 2;
+      const dx = x - innerWidth / 2, dy = y - innerHeight / 2;
       return Math.sqrt(dx * dx + dy * dy) < HIT_RADIUS();
     }
 
@@ -233,10 +208,11 @@
         state.touchOnSphere = nearCenter(e.touches[0].clientX, e.touches[0].clientY);
         state.lastDX = e.touches[0].clientX;
         state.lastDY = e.touches[0].clientY;
+        state.rotXVel = 0; state.rotYVel = 0;
       }
       if (e.touches.length === 2) {
         state.lastPinchDist = pinchDist(e);
-        state.touchOnSphere = false; // pinch overrides
+        state.touchOnSphere = false;
       }
     }, { passive: true });
 
@@ -245,11 +221,13 @@
       if (e.touches.length === 1 && state.touchOnSphere) {
         const dx = e.touches[0].clientX - state.lastDX;
         const dy = e.touches[0].clientY - state.lastDY;
-        state.rotY += dx * 0.009;
-        state.rotX += dy * 0.009;
-        state.rotX  = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.rotX));
-        state.lastDX = e.touches[0].clientX;
-        state.lastDY = e.touches[0].clientY;
+        state.rotYVel = dx * 0.009;
+        state.rotXVel = dy * 0.009;
+        state.rotY   += dx * 0.009;
+        state.rotX   += dy * 0.009;
+        state.rotX    = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.rotX));
+        state.lastDX  = e.touches[0].clientX;
+        state.lastDY  = e.touches[0].clientY;
       }
       if (e.touches.length === 2 && state.lastPinchDist !== null) {
         const d = pinchDist(e);
@@ -263,21 +241,23 @@
       if (e.touches.length === 0) state.touchOnSphere = false;
     }, { passive: true });
 
-    // Mouse (desktop)
+    // Mouse
     let mouseDragging = false, mouseOnSphere = false;
     document.addEventListener('mousedown', (e) => {
       if (!state.started) return;
       mouseDragging = true;
       mouseOnSphere = nearCenter(e.clientX, e.clientY);
       state.lastDX = e.clientX; state.lastDY = e.clientY;
+      state.rotXVel = 0; state.rotYVel = 0;
     });
     document.addEventListener('mousemove', (e) => {
       if (!mouseDragging || !mouseOnSphere) return;
-      const dx = e.clientX - state.lastDX;
-      const dy = e.clientY - state.lastDY;
-      state.rotY += dx * 0.009;
-      state.rotX += dy * 0.009;
-      state.rotX  = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.rotX));
+      const dx = e.clientX - state.lastDX, dy = e.clientY - state.lastDY;
+      state.rotYVel = dx * 0.009;
+      state.rotXVel = dy * 0.009;
+      state.rotY   += dx * 0.009;
+      state.rotX   += dy * 0.009;
+      state.rotX    = Math.max(-Math.PI / 2, Math.min(Math.PI / 2, state.rotX));
       state.lastDX = e.clientX; state.lastDY = e.clientY;
     });
     document.addEventListener('mouseup', () => { mouseDragging = false; mouseOnSphere = false; });
@@ -288,11 +268,10 @@
     // Tilt
     function onTilt(ev) {
       if (ev.gamma == null) return;
-      state.gravX = Math.max(-0.35, Math.min(0.35, (ev.gamma / 45) * 0.28));
-      state.gravY = Math.max(-0.35, Math.min(0.35, ((ev.beta - 30) / 90) * 0.28));
+      state.gravX = Math.max(-0.3, Math.min(0.3, (ev.gamma / 45) * 0.25));
+      state.gravY = Math.max(-0.3, Math.min(0.3, ((ev.beta - 30) / 90) * 0.25));
     }
 
-    // Start handler (called from p5 overlay tap)
     window._cosmicStart = () => {
       if (state.started) return;
       state.started = true;
@@ -305,81 +284,97 @@
         window.addEventListener('deviceorientation', onTilt);
       }
     };
-
   </script>
 
-  <!-- p5.js particle field -->
+  <!-- p5.js — stars + particle field -->
   <script>
-  // ════════════════════════════════════════════════════════
-  //  P5.JS — particle flow field
-  // ════════════════════════════════════════════════════════
   let particles = [];
-  let burstPoints = [];
+  let stars     = [];
   let flowField = [];
   let cols, rows;
   const SCALE = 22;
   let zoff = 0;
-  let hueShift = 240;
-  const N_BASE = 500;
+  const N_BASE = 600;
+
+  // Cosmic matter color: icy cyan/blue
+  const FLOW_HUE = 195;   // degrees in HSB
 
   function setup() {
     let cnv = createCanvas(windowWidth, windowHeight);
     cnv.elt.id = 'p5-canvas';
     cnv.elt.style.position = 'fixed';
-    cnv.elt.style.inset = '0';
-    cnv.elt.style.zIndex = '0';
+    cnv.elt.style.inset    = '0';
+    cnv.elt.style.zIndex   = '0';
     colorMode(HSB, 360, 100, 100, 100);
     pixelDensity(Math.min(window.devicePixelRatio, 2));
+
     cols = floor(width / SCALE) + 1;
     rows = floor(height / SCALE) + 1;
     flowField = new Array(cols * rows);
+
+    // Generate static star field
+    for (let i = 0; i < 320; i++) {
+      stars.push({
+        x: random(width),
+        y: random(height),
+        r: random(0.3, 1.6),
+        a: random(20, 90),
+        twinkle: random(0.005, 0.02),
+        phase: random(TWO_PI),
+      });
+    }
+
     for (let i = 0; i < N_BASE; i++) particles.push(new Particle());
   }
 
   function draw() {
-    const state = window._cosmicState;
-    if (!state || !state.started) return;
+    const s = window._cosmicState;
+    if (!s || !s.started) return;
 
+    // ── Deep space background with trail fade ──
     blendMode(BLEND);
     colorMode(HSB, 360, 100, 100, 100);
     noStroke();
-    fill(240, 20, 4, 11);
+    fill(220, 30, 3, 18);   // very dark blue-black, semi-transparent for trails
     rect(0, 0, width, height);
 
-    // Flow field
+    // ── Stars ──
+    noStroke();
+    for (let star of stars) {
+      star.phase += star.twinkle;
+      let a = star.a + sin(star.phase) * 18;
+      colorMode(HSB, 360, 100, 100, 100);
+      fill(210, 10, 100, a);
+      circle(star.x, star.y, star.r * 2);
+    }
+
+    // ── Flow field — biased by sphere rotation ──
+    // rotY → horizontal flow shift, rotX → vertical shift
+    let angleOffset = s.rotYCur * 1.2;   // sphere drag bends the field
+    let vertOffset  = s.rotXCur * 0.8;
+
     let yoff = 0;
     for (let y = 0; y < rows; y++) {
       let xoff = 0;
       for (let x = 0; x < cols; x++) {
-        let angle = noise(xoff, yoff, zoff) * TWO_PI * 2.4;
-        flowField[x + y * cols] = p5.Vector.fromAngle(angle);
+        let base  = noise(xoff, yoff, zoff) * TWO_PI * 2.4;
+        // Blend in the planet's rotation as a large-scale field warp
+        let warpX = map(x, 0, cols, -1, 1);
+        let warpY = map(y, 0, rows, -1, 1);
+        let planetBias = atan2(warpY + vertOffset, warpX + angleOffset) * 0.55;
+        flowField[x + y * cols] = p5.Vector.fromAngle(base + planetBias);
         xoff += 0.12;
       }
       yoff += 0.12;
     }
-    zoff += 0.004;
-    hueShift += 0.12;
+    zoff += 0.0035;
 
-    // Burst ripples
-    noFill();
-    for (let i = burstPoints.length - 1; i >= 0; i--) {
-      let b = burstPoints[i];
-      b.life--; b.r += 5;
-      if (b.life <= 0) { burstPoints.splice(i, 1); continue; }
-      let a  = map(b.life, 0, b.maxLife, 0, 55);
-      let a2 = map(b.life, 0, b.maxLife, 0, 30);
-      let h  = (b.hue + hueShift) % 360;
-      stroke(h, 70, 100, a);   strokeWeight(1.5); circle(b.x, b.y, b.r * 2);
-      stroke((h+25)%360, 50, 100, a2); strokeWeight(1); circle(b.x, b.y, b.r * 0.65);
-    }
-
-    // Particles
+    // ── Cosmic matter particles (ADD blend for glow) ──
     blendMode(ADD);
     for (let i = particles.length - 1; i >= 0; i--) {
       let p = particles[i];
       p.follow(flowField);
-      p.applyGravity(state.gravX, state.gravY);
-      p.applyBursts(burstPoints);
+      p.applyGravity(s.gravX, s.gravY);
       p.update();
       p.checkEdges();
       p.draw();
@@ -392,79 +387,56 @@
     cols = floor(width / SCALE) + 1;
     rows = floor(height / SCALE) + 1;
     flowField = new Array(cols * rows);
+    // Reposition stars
+    for (let star of stars) {
+      star.x = random(width);
+      star.y = random(height);
+    }
   }
 
-  // ── Input ────────────────────────────────────────────────
+  // ── Start on first tap ───────────────────────────────────
   function touchStarted() {
-    const state = window._cosmicState;
-    if (!state) return false;
-
-    if (!state.started) {
-      window._cosmicStart && window._cosmicStart();
-      let ov = document.getElementById('overlay');
-      if (ov) { ov.style.opacity = '0'; setTimeout(() => ov.remove(), 900); }
-      setTimeout(() => {
-        let h = document.getElementById('hint');
-        if (h) h.style.opacity = '0';
-      }, 5500);
-    }
-
-    if (state.started && !state.touchOnSphere && touches.length === 1) {
-      spawnBurst(touches[0].x, touches[0].y);
-    }
+    _tryStart();
     return false;
   }
+  function mousePressed() { _tryStart(); }
+  function touchMoved()   { return false; }
+  function touchEnded()   { return false; }
 
-  function mousePressed() {
-    const state = window._cosmicState;
-    if (!state) return;
-    if (!state.started) {
-      window._cosmicStart && window._cosmicStart();
-      let ov = document.getElementById('overlay');
-      if (ov) { ov.style.opacity = '0'; setTimeout(() => ov.remove(), 900); }
-      setTimeout(() => {
-        let h = document.getElementById('hint');
-        if (h) h.style.opacity = '0';
-      }, 5500);
-    }
-    // Burst only if not dragging the sphere (checked via mouseOnSphere in module script)
-    if (state.started && !touches.length) {
-      const dx = mouseX - width / 2, dy = mouseY - height / 2;
-      const onSphere = Math.sqrt(dx*dx + dy*dy) < Math.min(width,height) * 0.28;
-      if (!onSphere) spawnBurst(mouseX, mouseY);
-    }
-  }
-
-  function touchMoved()  { return false; }
-  function touchEnded()  { return false; }
-
-  function spawnBurst(x, y) {
-    let h = random(360);
-    burstPoints.push({ x, y, hue: h, life: 55, maxLife: 55, r: 8 });
-    for (let i = 0; i < 45; i++) {
-      let p = new Particle(x, y, h);
-      let speed = random(4, 12);
-      p.vel = p5.Vector.random2D().mult(speed);
-      p.maxSpeed = speed * 1.1;
-      p.size = random(1, 3);
-      p.life = random(60, 160);
-      p.maxLife = p.life;
-      particles.push(p);
-    }
-    while (particles.length > N_BASE + 180) particles.shift();
+  function _tryStart() {
+    const s = window._cosmicState;
+    if (!s || s.started) return;
+    window._cosmicStart && window._cosmicStart();
+    let ov = document.getElementById('overlay');
+    if (ov) { ov.style.opacity = '0'; setTimeout(() => ov.remove(), 900); }
+    setTimeout(() => {
+      let h = document.getElementById('hint');
+      if (h) h.style.opacity = '0';
+    }, 5500);
   }
 
   // ── Particle class ───────────────────────────────────────
   class Particle {
-    constructor(x, y, hue) {
-      this.pos      = createVector(x ?? random(width), y ?? random(height));
+    constructor() {
+      this._init();
+    }
+
+    _init() {
+      // Spawn from edges or random
+      let edge = floor(random(4));
+      if      (edge === 0) this.pos = createVector(random(width),  -10);
+      else if (edge === 1) this.pos = createVector(random(width),  height + 10);
+      else if (edge === 2) this.pos = createVector(-10,             random(height));
+      else                 this.pos = createVector(width + 10,      random(height));
+
       this.prevPos  = this.pos.copy();
-      this.vel      = p5.Vector.random2D().mult(random(0.5, 2.2));
+      this.vel      = p5.Vector.random2D().mult(random(0.4, 1.8));
       this.acc      = createVector(0, 0);
-      this.maxSpeed = random(2.5, 5.5);
-      this.hue      = hue ?? ((hueShift + random(-70, 70)) % 360);
-      this.size     = random(0.7, 2.2);
-      this.life     = random(200, 550);
+      this.maxSpeed = random(2.2, 5.0);
+      // Slight hue variation around cyan — stays monochromatic
+      this.hueOff   = random(-18, 18);
+      this.size     = random(0.6, 1.8);
+      this.life     = random(180, 500);
       this.maxLife  = this.life;
     }
 
@@ -472,22 +444,10 @@
       let fx = constrain(floor(this.pos.x / SCALE), 0, cols - 1);
       let fy = constrain(floor(this.pos.y / SCALE), 0, rows - 1);
       let f  = field[fx + fy * cols];
-      if (f) this.acc.add(f.copy().mult(0.45));
+      if (f) this.acc.add(f.copy().mult(0.5));
     }
 
     applyGravity(gx, gy) { this.acc.add(createVector(gx, gy)); }
-
-    applyBursts(bursts) {
-      for (let b of bursts) {
-        let d = dist(this.pos.x, this.pos.y, b.x, b.y);
-        if (d < 220 && d > 1) {
-          let f = p5.Vector.sub(this.pos, createVector(b.x, b.y));
-          f.normalize().mult(map(d, 0, 220, 0.9, 0) * (b.life / b.maxLife));
-          this.acc.add(f);
-          this.hue = lerp(this.hue, (b.hue + hueShift) % 360, 0.06);
-        }
-      }
-    }
 
     update() {
       this.prevPos.set(this.pos);
@@ -498,38 +458,27 @@
     }
 
     checkEdges() {
-      if (this.pos.x < -30 || this.pos.x > width + 30 ||
-          this.pos.y < -30 || this.pos.y > height + 30 || this.life <= 0) {
-        this._respawn();
+      if (this.pos.x < -40 || this.pos.x > width + 40 ||
+          this.pos.y < -40 || this.pos.y > height + 40 || this.life <= 0) {
+        this._init();
       }
     }
 
-    _respawn() {
-      let edge = floor(random(4));
-      if      (edge === 0) this.pos.set(random(width),  -15);
-      else if (edge === 1) this.pos.set(random(width),  height + 15);
-      else if (edge === 2) this.pos.set(-15,             random(height));
-      else                 this.pos.set(width + 15,      random(height));
-      this.prevPos.set(this.pos);
-      this.vel      = p5.Vector.random2D().mult(random(0.5, 2));
-      this.acc.mult(0);
-      this.maxSpeed = random(2.5, 5.5);
-      this.hue      = (hueShift + random(-70, 70)) % 360;
-      this.size     = random(0.7, 2.2);
-      this.life     = random(200, 550);
-      this.maxLife  = this.life;
-    }
-
     draw() {
-      let speed = this.vel.mag();
-      let lr = this.life / this.maxLife;
-      let alphaLife = lr < 0.15 ? map(lr, 0, 0.15, 0, 1) : lr > 0.85 ? map(lr, 0.85, 1, 1, 0) : 1;
-      let alpha = constrain(alphaLife * map(speed, 0, this.maxSpeed, 18, 68), 0, 68);
-      let sat = map(speed, 0, this.maxSpeed, 55, 100);
-      let bri = map(speed, 0, this.maxSpeed, 65, 100);
-      let hue = ((this.hue + hueShift) % 360 + 360) % 360;
+      let speed   = this.vel.mag();
+      let lr      = this.life / this.maxLife;
+      let fadeIn  = lr > 0.88 ? map(lr, 1, 0.88, 0, 1) : 1;
+      let fadeOut = lr < 0.12 ? map(lr, 0, 0.12, 0, 1) : 1;
+      let fade    = fadeIn * fadeOut;
+
+      // Speed drives brightness and saturation — slow = faint whisp, fast = bright streak
+      let alpha = fade * map(speed, 0, this.maxSpeed, 8, 62);
+      let sat   = map(speed, 0, this.maxSpeed, 30, 90);
+      let bri   = map(speed, 0, this.maxSpeed, 55, 100);
+      let hue   = ((FLOW_HUE + this.hueOff) % 360 + 360) % 360;
+
       colorMode(HSB, 360, 100, 100, 100);
-      stroke(hue, sat, bri, alpha);
+      stroke(hue, sat, bri, constrain(alpha, 0, 70));
       strokeWeight(this.size);
       noFill();
       line(this.prevPos.x, this.prevPos.y, this.pos.x, this.pos.y);
